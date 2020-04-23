@@ -1,0 +1,176 @@
+<meta charset=utf-8>
+<style>
+  canvas {
+    border: 1px solid black;
+  }
+input {
+  padding: 0px;
+  margin-top: 0px;
+  margin-bottom: 384px;
+  height: 384px;
+  width: 15px;
+  -webkit-appearance: slider-vertical;
+}
+html {
+  font-family: sans-serif;
+}
+
+#wrapperr {
+  display: flex;
+  justify-content: center;
+}
+#wrapper {
+}
+#explanations {
+  display: block;
+  margin-left: 2em;
+}
+</style>
+<div id=wrapperr>
+  <div id=wrapper>
+    <div id=explanations>
+      <h1>Audio Roundtrip latency measurements</h1>
+      <p>
+        Volume up, in a quiet environment, but prepare to lower it quickly, until it doesn't feedback
+      </p>
+      <button>Start measure</button>
+      <p>Measured rountrip: <span id=latency>...</span></p>
+      <p>Computed output latency: <span id=computed>...</span></p>
+    </div>
+    <input type=range value=0.2 min=0.0 max=1.0 step=0.01 vertical orient="vertical">
+    <canvas width=1024 height=768></canvas>
+  </div>
+</div>
+<script id=processor type="audio/worklet">
+class MeasureProcessor extends AudioWorkletProcessor {
+  constructor(...args) {
+    super(args);
+    this.startTime = globalThis.currentFrame;
+    // 500ms
+    this.interval = 0.5 * globalThis.sampleRate;
+    this.remaining = this.interval;
+    this.found = false;
+    this.start = 0;
+    this.tapped = false;
+    this.square_frames = 64;
+    this.square_remaining = 64;
+    var self = this;
+    this.port.onmessage = function(e) {
+      self.threshold = e.data.threshold;
+    }
+  }
+  process(inputs, outputs) {
+    var input = inputs[0];
+    if (!input.length) {
+      return true;
+    }
+    var mono_input = input[0];
+    var mono_output = outputs[0][0];
+    for (var i = 0; i < 128; i++) {
+      if (mono_input[i] > this.threshold && this.tapped) {
+        var latency_s = ((globalThis.currentFrame + i) - this.start) / globalThis.sampleRate;
+        this.port.postMessage({latency: latency_s});
+        this.tapped = false;
+      }
+      if (this.remaining == 0) {
+        if (this.square_remaining == this.square_frames) {
+          this.tapped = true;
+          this.start = globalThis.currentFrame + i;
+        }
+        mono_output[i] = (this.square_remaining % 16) > 8 ? 0.8 : -0.8;
+        this.square_remaining--;
+        if (this.square_remaining == 0) {
+          this.square_remaining = this.square_frames;
+          this.remaining = this.interval;
+        }
+      } else {
+        this.remaining--;
+      }
+      mono_output[i] += mono_input[i];
+    }
+    return true;
+  }
+}
+
+registerProcessor('measure-processor', MeasureProcessor);
+</script>
+
+<script>
+  $ = document.querySelectorAll.bind(document);
+  $("button")[0].onclick = start;
+  const text = $('#processor')[0].innerText;
+  const blob = new Blob([text], {type: "application/javascript"});
+  const url = URL.createObjectURL(blob);
+  var ac = new AudioContext();
+  var canvas = $("canvas")[0];
+  var w = canvas.width;
+  var h = canvas.height;
+  var ctx = canvas.getContext("2d");
+  var analyser = new AnalyserNode(ac);
+  analyser.fftSize = 2048;
+  var buf = new Float32Array(analyser.frequencyBinCount);
+  var cvs_step = w / buf.length;
+
+  threshold = $("input[type=range]")[0].value;
+
+  function draw() {
+    ctx.clearRect(0, 0, w, h);
+    analyser.getFloatTimeDomainData(buf);
+    var acc = 0;
+    var t = true;
+    [parseFloat(threshold), -0.75,-0.5,-0.25, 0, 0.25, 0.5, 0.75].forEach(function(v) {
+      if (t) {
+        ctx.strokeStyle = "#a00";
+        t = false;
+      } else {
+        ctx.strokeStyle = "#aaa";
+      }
+      ctx.fillText(v, 3, h/2 - (v * h/2) + 3);
+      ctx.beginPath();
+      ctx.moveTo(30, h/2 - (v * h/2));
+      ctx.lineTo(w-30, h/2 - (v * h/2));
+      ctx.stroke();
+      ctx.closePath();
+    });
+    for (var i = 0; i < buf.length; i++) {
+      ctx.fillRect(acc, h/2, cvs_step, buf[i] * h / 2);
+      acc+=cvs_step;
+    }
+    requestAnimationFrame(draw);
+  }
+
+  requestAnimationFrame(draw);
+
+  async function start() {
+    try {
+    ac.audioWorklet.addModule(url);
+    await ac.resume();
+    let stream = await navigator.mediaDevices.getUserMedia({audio: {
+      echoCancellation: false,
+      noiseSupression: false,
+      autoGainControl: false
+    }});
+
+
+    var mic_source = ac.createMediaStreamSource(stream);
+    var worklet_node = new AudioWorkletNode(ac, 'measure-processor', {outputChannelCount: [1]});
+    worklet_node.channelCount = 1;
+    mic_source.connect(analyser);
+    mic_source.connect(worklet_node).connect(ac.destination);
+
+    worklet_node.port.postMessage({threshold: $("input")[0].value });
+
+      worklet_node.port.onmessage = function(e) {
+        $("#latency")[0].innerText = (e.data.latency * 1000) + "ms"
+        $("#computed")[0].innerText = (ac.outputLatency * 1000)+ "ms"
+      }
+
+    $("input[type=range]")[0].oninput = (e) => {
+      threshold = e.target.value;
+      worklet_node.port.postMessage({threshold: e.target.value});
+    };
+    } catch (e) {
+      console.log(e);
+    }
+  }
+</script>
