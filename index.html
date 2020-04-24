@@ -14,7 +14,6 @@ input {
 html {
   font-family: sans-serif;
 }
-
 #wrapperr {
   display: flex;
   justify-content: center;
@@ -25,13 +24,46 @@ html {
   display: block;
   margin-left: 2em;
 }
+#latency, #computed {
+  font-weight: 700;
+}
+p, ul {
+  max-width: 35em;
+}
 </style>
 <div id=wrapperr>
   <div id=wrapper>
     <div id=explanations>
       <h1>Audio Roundtrip latency measurements</h1>
       <p>
-        Volume up, in a quiet environment, but prepare to lower it quickly, until it doesn't feedback
+        In a quiet environment, either:
+        </p>
+        <ul>
+          <li>using the speakers of a computer, and the microphone of the computer
+          <li>using headphones, and their microphone, or regular headphones and
+          the microphone of the computer
+        </ul>
+        <p>
+        Lower the volume of the output device, and in the case of headphones
+        bring it closer to the mic (if at all possible).
+        </p>
+        <p>
+        Click the button, and accept to share the microphone (it's not going
+        anywhere, the code is simple just look at it).
+        </p>
+        <p>
+        Gradually and slowly increase the output volume of the computer until a
+        noise burst is hearable, and seen on the page, but low enough to not
+        cause feedback.
+        </p>
+        <p>
+        Adjust the red line with the slider, so that it falls just below the
+        peaks of the waveform. When this is the case, note and report the two
+        numbers in bold, along with the setup and contact info <a
+          href="https://docs.google.com/spreadsheets/d/17rU23jfUFf3J6_YVsufon_eDP7OE_Lx-kNbCgqLeLxI/edit?usp=sharing">here</a>.
+      </p>
+      <p>
+      For any question contact <code>padenot@mozilla.com</code>
       </p>
       <button>Start measure</button>
       <p>Measured rountrip: <span id=latency>...</span></p>
@@ -114,7 +146,9 @@ registerProcessor('measure-processor', MeasureProcessor);
   threshold = $("input[type=range]")[0].value;
 
   function draw() {
-    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = "rgba(255, 255, 255, 0.05)";
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = "#333";
     analyser.getFloatTimeDomainData(buf);
     var acc = 0;
     var t = true;
