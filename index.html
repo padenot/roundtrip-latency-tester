@@ -128,6 +128,7 @@ registerProcessor('measure-processor', MeasureProcessor);
 </script>
 
 <script>
+function main() {
   if (!window.AudioWorkletNode) {
     alert("This experiemennt requires AudioWorklet, please try this on Firefox beta 76 and more recent");
     return;
@@ -211,4 +212,6 @@ registerProcessor('measure-processor', MeasureProcessor);
       console.log(e);
     }
   }
+}
+main();
 </script>
