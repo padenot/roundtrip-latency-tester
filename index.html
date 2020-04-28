@@ -1,3 +1,114 @@
+<script id=processor type="audio/worklet">
+function mod(n, m) {
+  return ((n % m) + m) % m;
+}
+class MeasureProcessor extends AudioWorkletProcessor {
+  constructor(...args) {
+    super(args);
+    this.interval = 1 * globalThis.sampleRate;
+    this.remaining = this.interval;
+    this.start = 0;
+    this.tapped = false;
+
+    // Noise burst synthesis parameter
+    this.sq_frames = 64;
+    this.sq_remaining = 64;
+    this.sq_period = 16;
+    this.sq_amp = 0.8;
+    // A ring buffer that always keep the last 10ms of audio to be able to find
+    // the beginning of the noise burst a peak has been found.
+    this.ringbuf = new Float32Array(0.01 * globalThis.sampleRate);
+    this.write_idx = 0;
+    var self = this;
+    this.port.onmessage = function(e) {
+      self.threshold = e.data.threshold;
+    }
+  }
+  // record a single sample in the ring buffer
+  record(sample) {
+    this.ringbuf[this.write_idx] = sample;
+    this.write_idx = mod(this.write_idx+1, this.ringbuf.length);
+  }
+  // get a sample from the ring buffer. idx is an offset in the past, 0 is the
+  // sample most recently written to the ring buffer
+  get_past_sample(idx) {
+    var not_wrapped = this.write_idx - 1 - idx;
+    var i = mod(this.write_idx-1-idx,this.ringbuf.length);
+    return this.ringbuf[i];
+  }
+  process(inputs, outputs) {
+    var input = inputs[0];
+    if (!input.length) {
+      return true;
+    }
+    var mono_input = input[0];
+    var mono_output = outputs[0][0];
+    for (var i = 0; i < mono_input.length; i++) {
+      this.record(mono_input[i]);
+      // This matches on a positive peak
+      if (mono_input[i] > this.threshold && this.tapped) {
+        // try to find the beginning of the pattern, because what's been found
+        // is probably a peak, which is in the middle of the burst. Scan
+        // back the last 10ms or so.
+        var idx_first_zero_crossing = -1;
+        var scan_back_idx = 0;
+        while (scan_back_idx++ != this.ringbuf.length) {
+          if (this.get_past_sample(scan_back_idx) < 0) {
+            idx_first_zero_crossing = scan_back_idx;
+            break;
+          }
+        }
+        // console.log(`first zero crossing: ${idx_first_zero_crossing}`);
+        // we expect zero crossing around each 8 frames. Stop when that's not
+        // the case anymore. This is not very good, this should be scanning
+        // window + correlation maximisation.
+        var sign = true;
+        var current_period = 0;
+        while (scan_back_idx++ != this.ringbuf.length) {
+          var computed_period = (scan_back_idx - idx_first_zero_crossing) / this.sq_period;
+          if (sign != Math.sign(this.get_past_sample(scan_back_idx))) {
+            // zero crossing, fuzz match
+            if (Math.abs(current_period - computed_period) > 3) {
+              // too far away from the generated burst, break and consider this
+              // the beginning of the burst.
+              break;
+            }
+          }
+        }
+        // // dump the array in the console to check
+        // var debugarray = new Float32Array(scan_back_idx);
+        // var rdIdx = 0;
+        // for (var j = 0; j < debugarray.length; j++) {
+        //   debugarray[debugarray.length - j] = this.get_past_sample(j);
+        // }
+        // console.log(debugarray);
+        var latency_s = ((globalThis.currentFrame + i - scan_back_idx) - this.start) / globalThis.sampleRate;
+        this.port.postMessage({latency: latency_s});
+        this.tapped = false;
+      }
+      if (this.remaining == 0) {
+        if (this.sq_remaining == this.sq_frames) {
+          this.tapped = true;
+          this.start = globalThis.currentFrame + i;
+        }
+        mono_output[i] = (this.sq_remaining % this.sq_period) >
+        this.sq_period/2 ? this.sq_amp : -this.sq_amp;
+        this.sq_remaining--;
+        if (this.sq_remaining == 0) {
+          this.sq_remaining = this.sq_frames;
+          this.remaining = this.interval;
+        }
+      } else {
+        this.remaining--;
+      }
+      mono_output[i] += mono_input[i];
+    }
+    return true;
+  }
+}
+
+registerProcessor('measure-processor', MeasureProcessor);
+</script>
 <meta charset=utf-8>
 <style>
   canvas {
@@ -59,13 +170,14 @@ p, ul {
         <p>
         Adjust the red line with the slider, so that it falls just below the
         peaks of the waveform. When this is the case, note and report the two
-        numbers in bold, along with the setup and contact info <a
-          href="https://docs.google.com/spreadsheets/d/17rU23jfUFf3J6_YVsufon_eDP7OE_Lx-kNbCgqLeLxI/edit?usp=sharing">here</a>.
+        numbers in bold, along with the setup and contact info <a href="https://docs.google.com/spreadsheets/d/17rU23jfUFf3J6_YVsufon_eDP7OE_Lx-kNbCgqLeLxI/edit?usp=sharing">here</a>.
       </p>
       <p>
       For any question contact <code>padenot@mozilla.com</code>
       </p>
-      <button>Start measure</button>
+      <button id=start>Start measure</button>
+      <button id=stop>Stop measure</button>
+      <p><code>AudioContext sample-rate: </code>: <span id=sample-rate>...</span></p>
       <p>Measured rountrip: <span id=latency>...</span></p>
       <p>Computed output latency: <span id=computed>...</span></p>
     </div>
@@ -73,72 +185,22 @@ p, ul {
     <canvas width=1024 height=768></canvas>
   </div>
 </div>
-<script id=processor type="audio/worklet">
-class MeasureProcessor extends AudioWorkletProcessor {
-  constructor(...args) {
-    super(args);
-    this.startTime = globalThis.currentFrame;
-    // 500ms
-    this.interval = 0.5 * globalThis.sampleRate;
-    this.remaining = this.interval;
-    this.found = false;
-    this.start = 0;
-    this.tapped = false;
-    this.square_frames = 64;
-    this.square_remaining = 64;
-    var self = this;
-    this.port.onmessage = function(e) {
-      self.threshold = e.data.threshold;
-    }
-  }
-  process(inputs, outputs) {
-    var input = inputs[0];
-    if (!input.length) {
-      return true;
-    }
-    var mono_input = input[0];
-    var mono_output = outputs[0][0];
-    for (var i = 0; i < 128; i++) {
-      if (mono_input[i] > this.threshold && this.tapped) {
-        var latency_s = ((globalThis.currentFrame + i) - this.start) / globalThis.sampleRate;
-        this.port.postMessage({latency: latency_s});
-        this.tapped = false;
-      }
-      if (this.remaining == 0) {
-        if (this.square_remaining == this.square_frames) {
-          this.tapped = true;
-          this.start = globalThis.currentFrame + i;
-        }
-        mono_output[i] = (this.square_remaining % 16) > 8 ? 0.8 : -0.8;
-        this.square_remaining--;
-        if (this.square_remaining == 0) {
-          this.square_remaining = this.square_frames;
-          this.remaining = this.interval;
-        }
-      } else {
-        this.remaining--;
-      }
-      mono_output[i] += mono_input[i];
-    }
-    return true;
-  }
-}
-
-registerProcessor('measure-processor', MeasureProcessor);
-</script>
 
 <script>
 function main() {
   if (!window.AudioWorkletNode) {
-    alert("This experiemennt requires AudioWorklet, please try this on Firefox beta 76 and more recent");
+    alert("This experiment requires AudioWorklet, please try this on Firefox beta 76 and more recent");
     return;
   }
   $ = document.querySelectorAll.bind(document);
-  $("button")[0].onclick = start;
+  $("button#start")[0].onclick = start;
+  $("button#stop")[0].onclick = stop;
+  $("button#stop")[0].disabled = true;
   const text = $('#processor')[0].innerText;
   const blob = new Blob([text], {type: "application/javascript"});
   const url = URL.createObjectURL(blob);
   var ac = new AudioContext();
+  $("#sample-rate")[0].innerText = ac.sampleRate;
   var canvas = $("canvas")[0];
   var w = canvas.width;
   var h = canvas.height;
@@ -147,6 +209,7 @@ function main() {
   analyser.fftSize = 2048;
   var buf = new Float32Array(analyser.frequencyBinCount);
   var cvs_step = w / buf.length;
+  var initialSetup = false;
 
   threshold = $("input[type=range]")[0].value;
 
@@ -178,36 +241,53 @@ function main() {
     requestAnimationFrame(draw);
   }
 
-  requestAnimationFrame(draw);
+  if (stop) {
+    requestAnimationFrame(draw);
+  }
+
+  function stop() {
+    ac.suspend();
+    $("button#stop")[0].disabled = true;
+    $("button#start")[0].disabled = false;
+    stop = true;
+  }
 
   async function start() {
-    try {
-    ac.audioWorklet.addModule(url);
+    $("button#stop")[0].disabled = false;
+    $("button#start")[0].disabled = true;
+    stop = false;
+    draw();
     await ac.resume();
-    let stream = await navigator.mediaDevices.getUserMedia({audio: {
-      echoCancellation: false,
-      noiseSupression: false,
-      autoGainControl: false
-    }});
+    try {
+      await ac.resume();
+      if (!initialSetup) {
+        await ac.audioWorklet.addModule(url);
+        let stream = await navigator.mediaDevices.getUserMedia({audio: {
+          echoCancellation: false,
+          noiseSupression: false,
+          autoGainControl: false
+        }});
+
+        var mic_source = ac.createMediaStreamSource(stream);
+        var worklet_node = new AudioWorkletNode(ac, 'measure-processor', {outputChannelCount: [1]});
+        worklet_node.channelCount = 1;
+        mic_source.connect(analyser);
+        mic_source.connect(worklet_node).connect(ac.destination);
+
+        worklet_node.port.postMessage({threshold: $("input")[0].value });
 
 
-    var mic_source = ac.createMediaStreamSource(stream);
-    var worklet_node = new AudioWorkletNode(ac, 'measure-processor', {outputChannelCount: [1]});
-    worklet_node.channelCount = 1;
-    mic_source.connect(analyser);
-    mic_source.connect(worklet_node).connect(ac.destination);
+        worklet_node.port.onmessage = function(e) {
+          $("#latency")[0].innerText = (e.data.latency * 1000) + "ms"
+          $("#computed")[0].innerText = (ac.outputLatency * 1000)+ "ms"
+        }
 
-    worklet_node.port.postMessage({threshold: $("input")[0].value });
-
-      worklet_node.port.onmessage = function(e) {
-        $("#latency")[0].innerText = (e.data.latency * 1000) + "ms"
-        $("#computed")[0].innerText = (ac.outputLatency * 1000)+ "ms"
+        $("input[type=range]")[0].oninput = (e) => {
+          threshold = e.target.value;
+          worklet_node.port.postMessage({threshold: e.target.value});
+        };
+        initialSetup = true;
       }
-
-    $("input[type=range]")[0].oninput = (e) => {
-      threshold = e.target.value;
-      worklet_node.port.postMessage({threshold: e.target.value});
-    };
     } catch (e) {
       console.log(e);
     }
