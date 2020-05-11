@@ -211,6 +211,10 @@ function main() {
   var cvs_step = w / buf.length;
   var initialSetup = false;
 
+  var inputProcessing = document.location.search.indexOf("input-processing") != -1;
+
+  console.log("Input processing: ", inputProcessing);
+
   threshold = $("input[type=range]")[0].value;
 
   function draw() {
@@ -262,11 +266,17 @@ function main() {
       await ac.resume();
       if (!initialSetup) {
         await ac.audioWorklet.addModule(url);
-        let stream = await navigator.mediaDevices.getUserMedia({audio: {
+        var constraints = inputProcessing ? { audio : {
+          // disabling this because we're intentionally trying to echo 
+          echoCancellation: false,
+          noiseSupression: true,
+          autoGainControl: true
+        }} : { audio: {
           echoCancellation: false,
           noiseSupression: false,
           autoGainControl: false
-        }});
+        }};
+        let stream = await navigator.mediaDevices.getUserMedia(constraints);
 
         var mic_source = ac.createMediaStreamSource(stream);
         var worklet_node = new AudioWorkletNode(ac, 'measure-processor', {outputChannelCount: [1]});
