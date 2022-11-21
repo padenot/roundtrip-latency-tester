@@ -117,9 +117,13 @@ registerProcessor('measure-processor', MeasureProcessor);
 </script>
 <meta charset=utf-8>
 <style>
-  canvas {
-    border: 1px solid black;
-  }
+body {
+  font-size: 24px;
+}
+canvas {
+  border: 1px solid black;
+  display: inline;
+}
 input {
   padding: 0px;
   margin-top: 0px;
@@ -127,15 +131,21 @@ input {
   height: 384px;
   width: 15px;
   -webkit-appearance: slider-vertical;
+  display: inline;
 }
 html {
   font-family: sans-serif;
 }
 #wrapperr {
   display: flex;
+  flex-direction: column;
   justify-content: center;
 }
-#wrapper {
+.wrapper {
+  justify-content: center;
+  flex-direction: row;
+  display: flex;
+  max-width: 95%;
 }
 #explanations {
   display: block;
@@ -144,39 +154,36 @@ html {
 #latency, #computed {
   font-weight: 700;
 }
-p, ul {
-  max-width: 35em;
-}
 </style>
 <div id=wrapperr>
-  <div id=wrapper>
+  <div class=wrapper>
     <div id=explanations>
       <h1>Audio Roundtrip latency measurements</h1>
       <p>
-        In a quiet environment, either:
-        </p>
-        <ul>
-          <li>using the speakers of a computer, and the microphone of the computer
-          <li>using headphones, and their microphone, or regular headphones and
-          the microphone of the computer
-        </ul>
-        <p>
-        Lower the volume of the output device, and in the case of headphones
-        bring it closer to the mic (if at all possible).
-        </p>
-        <p>
-        Click the button, and accept to share the microphone (it's not going
-        anywhere, the code is simple just look at it).
-        </p>
-        <p>
-        Gradually and slowly increase the output volume of the computer until a
-        noise burst is hearable, and seen on the page, but low enough to not
-        cause feedback.
-        </p>
-        <p>
-        Adjust the red line with the slider, so that it falls just below the
-        peaks of the waveform. When this is the case, note and report the two
-        numbers in bold, along with the setup and contact info <a href="https://docs.google.com/spreadsheets/d/17rU23jfUFf3J6_YVsufon_eDP7OE_Lx-kNbCgqLeLxI/edit?usp=sharing">here</a>.
+      In a quiet environment, either:
+      </p>
+      <ul>
+        <li>using the speakers of a computer, and the microphone of the computer
+        <li>using headphones, and their microphone, or regular headphones and
+        the microphone of the computer
+      </ul>
+      <p>
+      Lower the volume of the output device, and in the case of headphones
+      bring it closer to the mic (if at all possible).
+      </p>
+      <p>
+      Click the button, and accept to share the microphone (it's not going
+      anywhere, the code is simple just look at it).
+      </p>
+      <p>
+      Gradually and slowly increase the output volume of the computer until a
+      noise burst is hearable, and seen on the page, but low enough to not
+      cause feedback.
+      </p>
+      <p>
+      Adjust the red line with the slider, so that it falls just below the
+      peaks of the waveform. When this is the case, note and report the two
+      numbers in bold, along with the setup and contact info <a href="https://docs.google.com/spreadsheets/d/17rU23jfUFf3J6_YVsufon_eDP7OE_Lx-kNbCgqLeLxI/edit?usp=sharing">here</a>.
       </p>
       <p>
       For any question contact <code>padenot@mozilla.com</code>
@@ -187,9 +194,13 @@ p, ul {
       <p>Measured rountrip: <span id=latency>...</span></p>
       <p>Computed output latency: <span id=computed>...</span></p>
     </div>
+  </div>
+  <div class=wrapper>
     <input type=range value=0.2 min=0.0 max=1.0 step=0.01 vertical orient="vertical">
     <canvas width=1024 height=768></canvas>
     <canvas id=debug width=1024 height=512></canvas>
+    <div>
+    </div>
   </div>
 </div>
 
@@ -210,6 +221,10 @@ function main() {
   $("#sample-rate")[0].innerText = ac.sampleRate;
   var canvas = $("canvas")[0];
   var canvas_debug = $("canvas")[1];
+  if (window.innerWidth < 1024) {
+    canvas.width = window.innerWidth * 0.95;
+    canvas.height = canvas.width * 0.75;
+  }
   var w = canvas.width;
   var h = canvas.height;
   var ctx = canvas.getContext("2d");
